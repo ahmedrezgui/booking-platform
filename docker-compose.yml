@@ -1,0 +1,84 @@
+services:
+  booking-backend:
+    build:
+      context: ./BookingBackend
+      dockerfile: Dockerfile
+    env_file:
+      - ./BookingBackend/.env
+    ports:
+      - "3000:3000" 
+    environment:
+      - DATABASE_URL=mysql://admin:root@db:3307/booking
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - monitoring  
+
+  booking-frontend:
+    build:
+      context: ./BookingFrontend
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001" 
+    depends_on:
+      - booking-backend # Assuming the frontend needs to communicate with the backend
+    networks:
+      - monitoring
+
+  db:
+    image: mysql:8.0
+    ports:
+      - "3307:3307"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=booking
+      - MYSQL_USER=admin
+      - MYSQL_PASSWORD=root
+      - MYSQL_ROOT_HOST=db
+      - MYSQL_TCP_PORT=3307
+    volumes:
+      - db:/var/lib/mysql
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost --silent"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 5s
+  sonarqube:
+    image: sonarqube:community
+    container_name: sonarqube
+    depends_on: [sonardb]
+    ports: ["9000:9000"]
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://sonardb:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonar
+    volumes:
+      - sonar_data:/opt/sonarqube/data
+      - sonar_extensions:/opt/sonarqube/extensions
+      - sonar_logs:/opt/sonarqube/logs
+
+  sonardb:
+    image: postgres:16
+    container_name: sonardb
+    environment:
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar
+      POSTGRES_DB: sonar
+    volumes:
+      - sonar_pg:/var/lib/postgresql/data
+
+volumes:
+  sonar_data:
+  sonar_extensions:
+  sonar_logs:
+  sonar_pg: 
+  db:   
+
+networks:
+  monitoring:
+    driver: bridge
+
