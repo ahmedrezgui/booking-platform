@@ -218,7 +218,7 @@ jobs:
       - name: Check services health
         run: |
           echo "Checking service status..."
-          docker-compose ps
+          docker compose ps
           
           echo "Testing frontend..."
           curl -f http://localhost:3000 || (echo "❌ Frontend not responding" && exit 1)
@@ -232,9 +232,9 @@ jobs:
         if: always()
         run: |
           echo "=== Backend Logs ==="
-          docker compose logs backend
+          docker compose logs booking-backend
           echo "=== Frontend Logs ==="
-          docker compose logs frontend
+          docker compose logs booking-frontend
 
   # ====================
   # DAST - DYNAMIC SECURITY TESTING
@@ -249,7 +249,7 @@ jobs:
       
       - name: Start application for DAST
         run: |
-          docker-compose up -d
+          docker compose up -d
           sleep 45
       
       - name: Verify application is running
@@ -310,7 +310,7 @@ jobs:
       
       - name: Cleanup
         if: always()
-        run: docker-compose down -v
+        run: docker compose down -v
 
   # ====================
   # SECURITY SUMMARY
