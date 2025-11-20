@@ -18,6 +18,7 @@ import * as dotenv from 'dotenv'
 import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { LoggingInterceptor } from './logging.interceptor';
+import { DebugVulnController } from './debug-vuln.controller';
 
 dotenv.config();
 //nn
@@ -48,7 +49,7 @@ dotenv.config();
     SseModule,
     PrometheusModule.register()
   ],
-  controllers: [AppController],
+  controllers: [AppController, DebugVulnController],
   providers: [
     AppService,
     ChatGateway,
