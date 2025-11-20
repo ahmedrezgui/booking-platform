@@ -50,41 +50,42 @@ jobs:
         - name: Checkout code
           uses: actions/checkout@v3
 
-        - name: Run Semgrep
-          uses: returntocorp/semgrep-action@v1
-          with:
-            config: >-
-                p/security-audit
-                p/owasp-top-ten
-                p/javascript
-                p/typescript
-                p/nodejs
-                p/react
-            generateSarif: true
-            sarifFile: semgrep.sarif   # 👈 ensure file is created
-          continue-on-error: true
+        - name: Install Semgrep
+          run: |
+            python3 -m pip install semgrep
+
+        - name: Run Semgrep (SARIF output)
+          run: |
+            semgrep --config p/security-audit \
+                    --config p/owasp-top-ten \
+                    --config p/javascript \
+                    --config p/typescript \
+                    --config p/nodejs \
+                    --config p/react \
+                    --sarif --output semgrep.sarif || true
 
         - name: Upload SARIF to GitHub Security
-          uses: github/codeql-action/upload-sarif@v3   # 👈 updated version
+          uses: github/codeql-action/upload-sarif@v4
           if: always()
           with:
             sarif_file: semgrep.sarif
 
         - name: Check for critical vulnerabilities
           run: |
-            if [ -f semgrep.sarif ]; then
-            CRITICAL_COUNT=$(jq '[.runs[].results[] | select(.level == "error")] | length' semgrep.sarif)
-            echo "Critical vulnerabilities found: $CRITICAL_COUNT"
-            
-            if [ "$CRITICAL_COUNT" -gt 0 ]; then
-                echo "❌ SAST Failed: $CRITICAL_COUNT critical vulnerabilities detected"
-                jq '.runs[].results[] | select(.level == "error") |
-                    {rule: .ruleId, message: .message.text,
-                    location: .locations[0].physicalLocation.artifactLocation.uri}' semgrep.sarif
-                exit 1
-            fi
-            else
-            echo "SARIF file missing, Semgrep may have failed."
+            if [ ! -f semgrep.sarif ]; then
+            echo "❌ SARIF file missing. Semgrep did not produce output."
             exit 1
             fi
+
+            CRITICAL_COUNT=$(jq '[.runs[].results[] | select(.level == "error")] | length' semgrep.sarif)
+            echo "Critical vulnerabilities found: $CRITICAL_COUNT"
+
+            if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "❌ SAST Failed: $CRITICAL_COUNT critical vulnerabilities detected"
+            jq '.runs[].results[] | select(.level == "error") |
+                {rule: .ruleId, message: .message.text,
+                location: .locations[0].physicalLocation.artifactLocation.uri}' semgrep.sarif
+            exit 1
+            fi
+
             echo "✅ SAST Passed: No critical vulnerabilities"
