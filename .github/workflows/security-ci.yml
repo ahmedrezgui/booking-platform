@@ -109,7 +109,7 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: ${{ matrix.component }}/package-lock.json
+          cache-dependency-path: "**/${{ matrix.component }}/package-lock.json"
       
       - name: Install dependencies
         working-directory: ./${{ matrix.component }}
@@ -164,7 +164,7 @@ jobs:
       
       - name: Build image for scanning
         run: |
-          docker-compose build ${{ matrix.image }}
+          docker compose build ${{ matrix.image }}
       
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
