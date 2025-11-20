@@ -98,49 +98,54 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     strategy:
-      matrix:
-        component: [backend, frontend]
+        matrix:
+         component: [backend, frontend]
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: ${{ matrix.component }}/package-lock.json
-      
-      - name: Install dependencies
-        working-directory: ./${{ matrix.component }}
-        run: npm ci
-      
-      - name: Run npm audit
-        working-directory: ./${{ matrix.component }}
-        run: |
-          npm audit --audit-level=high --json > npm-audit-${{ matrix.component }}.json || true
-      
-      - name: Check audit results
-        working-directory: ./${{ matrix.component }}
-        run: |
-          if [ -f npm-audit-${{ matrix.component }}.json ]; then
-            HIGH=$(jq '.metadata.vulnerabilities.high // 0' npm-audit-${{ matrix.component }}.json)
-            CRITICAL=$(jq '.metadata.vulnerabilities.critical // 0' npm-audit-${{ matrix.component }}.json)
-            
-            echo "High vulnerabilities: $HIGH"
-            echo "Critical vulnerabilities: $CRITICAL"
-            
-            if [ "$HIGH" -gt 0 ] || [ "$CRITICAL" -gt 0 ]; then
-              echo "❌ SCA Failed for ${{ matrix.component }}: High/Critical vulnerabilities found"
-              jq '.vulnerabilities' npm-audit-${{ matrix.component }}.json
-              exit 1
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        - name: Setup Node.js
+          uses: actions/setup-node@v4
+          with:
+            node-version: 18
+            cache: 'npm'
+
+        - name: Install dependencies
+          working-directory: ./${{ matrix.component }}
+          run: |
+            if [ ! -f package-lock.json ]; then
+            echo "⚠️ No package-lock.json found — skipping npm cache for ${{ matrix.component }}"
             fi
-          fi
-          echo "✅ SCA Passed for ${{ matrix.component }}"
-      
-      - name: Upload audit results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: sca-results-${{ matrix.component }}
-          path: ${{ matrix.component }}/npm-audit-${{ matrix.component }}.json
+            npm ci
+
+        - name: Run npm audit
+          working-directory: ./${{ matrix.component }}
+          run: npm audit --audit-level=high --json > npm-audit-${{ matrix.component }}.json || true
+
+        - name: Check audit results
+          working-directory: ./${{ matrix.component }}
+          run: |
+            FILE=npm-audit-${{ matrix.component }}.json
+            if [ ! -f "$FILE" ]; then
+            echo "❌ Audit file missing — npm audit failed"
+            exit 1
+            fi
+            HIGH=$(jq '.metadata.vulnerabilities.high // 0' "$FILE")
+            CRITICAL=$(jq '.metadata.vulnerabilities.critical // 0' "$FILE")
+            echo "High: $HIGH"
+            echo "Critical: $CRITICAL"
+            if [ "$HIGH" -gt 0 ] || [ "$CRITICAL" -gt 0 ]; then
+            echo "❌ Vulnerabilities found in ${{ matrix.component }}"
+            jq '.vulnerabilities' "$FILE"
+            exit 1
+            fi
+            echo "✅ SCA Passed for ${{ matrix.component }}"
+
+        - name: Upload audit results
+          uses: actions/upload-artifact@v4
+          if: always()
+          with:
+            name: sca-results-${{ matrix.component }}
+            path: ${{ matrix.component }}/npm-audit-${{ matrix.component }}.json
+
