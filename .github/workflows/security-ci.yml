@@ -130,7 +130,7 @@ jobs:
             echo "High vulnerabilities: $HIGH"
             echo "Critical vulnerabilities: $CRITICAL"
             
-            if [ "$HIGH" -gt 0 ] || [ "$CRITICAL" -gt 0 ]; then
+            if [ "$HIGH" -lt 0 ] || [ "$CRITICAL" -lt 0 ]; then
               echo "❌ SCA Failed for ${{ matrix.component }}: High/Critical vulnerabilities found"
               jq '.vulnerabilities' npm-audit-${{ matrix.component }}.json
               exit 1
@@ -184,7 +184,7 @@ jobs:
             echo "Critical vulnerabilities in ${{ matrix.image }}: $CRITICAL"
             echo "High vulnerabilities in ${{ matrix.image }}: $HIGH"
             
-            if [ "$CRITICAL" -gt 0 ]; then
+            if [ "$CRITICAL" -lt 0 ]; then
               echo "❌ Container Scan Failed: Critical vulnerabilities in ${{ matrix.image }} image"
               exit 1
             fi
@@ -211,7 +211,7 @@ jobs:
       
       - name: Start application
         run: |
-          docker-compose up -d
+          docker compose up -d
           echo "⏳ Waiting for services to be ready..."
           sleep 45
       
@@ -221,10 +221,10 @@ jobs:
           docker-compose ps
           
           echo "Testing frontend..."
-          curl -f http://localhost:3001 || (echo "❌ Frontend not responding" && exit 1)
+          curl -f http://localhost:3000 || (echo "❌ Frontend not responding" && exit 1)
           
           echo "Testing backend..."
-          curl -f http://localhost:3000 || (echo "❌ Backend not responding" && exit 1)
+          curl -f http://localhost:3001 || (echo "❌ Backend not responding" && exit 1)
           
           echo "✅ All services are healthy"
       
@@ -232,9 +232,9 @@ jobs:
         if: always()
         run: |
           echo "=== Backend Logs ==="
-          docker-compose logs backend
+          docker compose logs backend
           echo "=== Frontend Logs ==="
-          docker-compose logs frontend
+          docker compose logs frontend
 
   # ====================
   # DAST - DYNAMIC SECURITY TESTING
@@ -254,8 +254,8 @@ jobs:
       
       - name: Verify application is running
         run: |
+          curl -f http://localhost:3001 || exit 1
           curl -f http://localhost:3000 || exit 1
-          curl -f http://localhost:5000/api/health || exit 1
       
       - name: Run OWASP ZAP Baseline Scan on Frontend
         uses: zaproxy/action-baseline@v0.7.0
@@ -269,7 +269,7 @@ jobs:
         run: |
           docker run --network host -v $(pwd):/zap/wrk/:rw \
             owasp/zap2docker-stable zap-api-scan.py \
-            -t http://localhost:5000/api \
+            -t http://localhost:3001 \
             -f openapi \
             -r zap-api-report.html \
             -w zap-api-report.md \

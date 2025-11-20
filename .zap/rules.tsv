@@ -1,0 +1,7 @@
+10021	WARN	(X-Content-Type-Options Header Missing)
+10020	WARN	(X-Frame-Options Header Not Set)
+10017	WARN	(Cross-Domain JavaScript Source File Inclusion)
+10098	WARN	(Cross-Domain Misconfiguration)
+10055	WARN	(CSP: Wildcard Directive)
+10096	WARN	(Timestamp Disclosure)
+90033	WARN	(Loosely Scoped Cookie)
