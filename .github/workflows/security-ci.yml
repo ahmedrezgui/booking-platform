@@ -29,10 +29,8 @@ jobs:
       
       - name: Build Docker images
         run: |
-          docker-compose -f docker-compose.yml build
+          docker compose -f docker-compose.yml build
       
       - name: Run basic tests
         run: |
           echo "✅ Build completed successfully"
-
-  
