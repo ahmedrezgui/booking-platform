@@ -89,3 +89,58 @@ jobs:
             fi
 
             echo "✅ SAST Passed: No critical vulnerabilities"
+
+  # ====================
+  # SCA - DEPENDENCY ANALYSIS
+  # ====================
+  sca-scan:
+    name: SCA - Dependency Security
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        component: [backend, frontend]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.component }}/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: ./${{ matrix.component }}
+        run: npm ci
+      
+      - name: Run npm audit
+        working-directory: ./${{ matrix.component }}
+        run: |
+          npm audit --audit-level=high --json > npm-audit-${{ matrix.component }}.json || true
+      
+      - name: Check audit results
+        working-directory: ./${{ matrix.component }}
+        run: |
+          if [ -f npm-audit-${{ matrix.component }}.json ]; then
+            HIGH=$(jq '.metadata.vulnerabilities.high // 0' npm-audit-${{ matrix.component }}.json)
+            CRITICAL=$(jq '.metadata.vulnerabilities.critical // 0' npm-audit-${{ matrix.component }}.json)
+            
+            echo "High vulnerabilities: $HIGH"
+            echo "Critical vulnerabilities: $CRITICAL"
+            
+            if [ "$HIGH" -gt 0 ] || [ "$CRITICAL" -gt 0 ]; then
+              echo "❌ SCA Failed for ${{ matrix.component }}: High/Critical vulnerabilities found"
+              jq '.vulnerabilities' npm-audit-${{ matrix.component }}.json
+              exit 1
+            fi
+          fi
+          echo "✅ SCA Passed for ${{ matrix.component }}"
+      
+      - name: Upload audit results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: sca-results-${{ matrix.component }}
+          path: ${{ matrix.component }}/npm-audit-${{ matrix.component }}.json
