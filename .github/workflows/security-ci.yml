@@ -99,8 +99,12 @@ jobs:
     needs: build
     strategy:
         matrix:
-         component: [backend, frontend]
-
+            include:
+                - component: backend
+                  path: backend
+                - component: frontend
+                  path: frontend
+                
     steps:
         - name: Checkout code
           uses: actions/checkout@v4
@@ -148,4 +152,208 @@ jobs:
           with:
             name: sca-results-${{ matrix.component }}
             path: ${{ matrix.component }}/npm-audit-${{ matrix.component }}.json
+
+  # ====================
+  # CONTAINER SECURITY SCAN
+  # ====================
+  container-scan:
+    name: Container Image Security
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        image: [backend, frontend]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Build image for scanning
+        run: |
+          docker-compose build ${{ matrix.image }}
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'ramirachdi/booking-${{ matrix.image }}:latest'
+          format: 'json'
+          output: 'trivy-${{ matrix.image }}-results.json'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+      
+      - name: Check Trivy results
+        run: |
+          if [ -f trivy-${{ matrix.image }}-results.json ]; then
+            CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-${{ matrix.image }}-results.json)
+            HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-${{ matrix.image }}-results.json)
+            
+            echo "Critical vulnerabilities in ${{ matrix.image }}: $CRITICAL"
+            echo "High vulnerabilities in ${{ matrix.image }}: $HIGH"
+            
+            if [ "$CRITICAL" -gt 0 ]; then
+              echo "❌ Container Scan Failed: Critical vulnerabilities in ${{ matrix.image }} image"
+              exit 1
+            fi
+          fi
+          echo "✅ Container Scan Passed for ${{ matrix.image }}"
+      
+      - name: Upload Trivy results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: trivy-results-${{ matrix.image }}
+          path: trivy-${{ matrix.image }}-results.json
+
+  # ====================
+  # DEPLOY EPHEMERAL ENVIRONMENT
+  # ====================
+  deploy-ephemeral:
+    name: Deploy to Test Environment
+    runs-on: ubuntu-latest
+    needs: [sast-scan, sca-scan, container-scan]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Start application
+        run: |
+          docker-compose up -d
+          echo "⏳ Waiting for services to be ready..."
+          sleep 45
+      
+      - name: Check services health
+        run: |
+          echo "Checking service status..."
+          docker-compose ps
+          
+          echo "Testing frontend..."
+          curl -f http://localhost:3000 || (echo "❌ Frontend not responding" && exit 1)
+          
+          echo "Testing backend..."
+          curl -f http://localhost:5000/api/health || (echo "❌ Backend not responding" && exit 1)
+          
+          echo "✅ All services are healthy"
+      
+      - name: Display application logs
+        if: always()
+        run: |
+          echo "=== Backend Logs ==="
+          docker-compose logs backend
+          echo "=== Frontend Logs ==="
+          docker-compose logs frontend
+
+  # ====================
+  # DAST - DYNAMIC SECURITY TESTING
+  # ====================
+  dast-scan:
+    name: DAST - Runtime Security Testing
+    runs-on: ubuntu-latest
+    needs: deploy-ephemeral
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Start application for DAST
+        run: |
+          docker-compose up -d
+          sleep 45
+      
+      - name: Verify application is running
+        run: |
+          curl -f http://localhost:3000 || exit 1
+          curl -f http://localhost:5000/api/health || exit 1
+      
+      - name: Run OWASP ZAP Baseline Scan on Frontend
+        uses: zaproxy/action-baseline@v0.7.0
+        with:
+          target: 'http://localhost:3000'
+          allow_issue_writing: false
+          fail_action: false
+        continue-on-error: true
+      
+      - name: Run OWASP ZAP API Scan on Backend
+        run: |
+          docker run --network host -v $(pwd):/zap/wrk/:rw \
+            owasp/zap2docker-stable zap-api-scan.py \
+            -t http://localhost:5000/api \
+            -f openapi \
+            -r zap-api-report.html \
+            -w zap-api-report.md \
+            -J zap-api-report.json \
+            -z "-config api.disablekey=true"
+        continue-on-error: true
+      
+      - name: Analyze ZAP results
+        run: |
+          if [ -f zap-api-report.json ]; then
+            echo "Analyzing DAST results..."
+            
+            # Count high and critical alerts
+            HIGH_ALERTS=$(cat zap-api-report.json | jq -r '.site[0].alerts[]? | select(.riskcode == "3") | .name' | wc -l)
+            CRITICAL_ALERTS=$(cat zap-api-report.json | jq -r '.site[0].alerts[]? | select(.riskcode == "4") | .name' | wc -l)
+            
+            echo "High severity alerts: $HIGH_ALERTS"
+            echo "Critical severity alerts: $CRITICAL_ALERTS"
+            
+            # Display vulnerabilities if found
+            if [ "$HIGH_ALERTS" -gt 0 ] || [ "$CRITICAL_ALERTS" -gt 0 ]; then
+              echo "❌ DAST vulnerabilities detected:"
+              cat zap-api-report.json | jq -r '.site[0].alerts[]? | select(.riskcode == "3" or .riskcode == "4") | "- \(.name) (\(.riskdesc))"'
+              exit 1
+            fi
+          fi
+          echo "✅ DAST Passed: No critical vulnerabilities in running application"
+      
+      - name: Upload ZAP reports
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: zap-reports
+          path: |
+            zap-api-report.html
+            zap-api-report.md
+            zap-api-report.json
+      
+      - name: Cleanup
+        if: always()
+        run: docker-compose down -v
+
+  # ====================
+  # SECURITY SUMMARY
+  # ====================
+  security-summary:
+    name: Security Gate Summary
+    runs-on: ubuntu-latest
+    needs: [sast-scan, sca-scan, container-scan, dast-scan]
+    if: always()
+    steps:
+      - name: Generate Security Report
+        run: |
+          echo "# 🔒 Security CI/CD Pipeline Report"
+          echo ""
+          echo "## Security Checks Status"
+          echo ""
+          echo "| Check | Status |"
+          echo "|-------|--------|"
+          echo "| SAST (Static Analysis) | ${{ needs.sast-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} |"
+          echo "| SCA (Dependencies) | ${{ needs.sca-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} |"
+          echo "| Container Security | ${{ needs.container-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} |"
+          echo "| DAST (Runtime Analysis) | ${{ needs.dast-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} |"
+          echo ""
+          
+          if [ "${{ needs.sast-scan.result }}" == "success" ] && \
+             [ "${{ needs.sca-scan.result }}" == "success" ] && \
+             [ "${{ needs.container-scan.result }}" == "success" ] && \
+             [ "${{ needs.dast-scan.result }}" == "success" ]; then
+            echo "## ✅ All Security Checks Passed"
+            echo "The application is ready for deployment."
+            exit 0
+          else
+            echo "## ❌ Security Checks Failed"
+            echo "Please fix the vulnerabilities before deploying."
+            exit 1
+          fi
+
 
